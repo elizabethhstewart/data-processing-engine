@@ -49,12 +49,14 @@ Crime requires `Neighborhood`, `CrimeDateTime`, `CCNumber`, `Description`. Crime
 ## Five research questions
 
 1. Which neighborhoods have the most vacancy notices, and how many crime records and distinct cases are reported there?
-2. Which neighborhoods with notices have the most distinct crime cases?
+2. How concentrated are notices in the top 10%, 25%, 50% and 100% of vacancy neighborhoods, and what share of distinct crime cases occurs in those areas?
 3. What crime types are reported in neighborhoods with versus without notices?
 4. How do monthly crime record counts vary in neighborhoods with notices?
 5. Which neighborhoods rank highest on a transparent combined planning score?
 
 The score is `50 × notices / maximum notices + 50 × neighborhood cases / maximum neighborhood cases`, using maxima across all input neighborhoods. Rankings break ties alphabetically. This score is exploratory, not a prediction or a recommendation to allocate enforcement resources.
+
+For question 2, neighborhoods with notices are ranked by notice count, with alphabetical tie breaks. Group sizes round up. Notice shares use all notices with known neighborhoods. Case coverage unions case IDs within each group and divides by the union across all known crime neighborhoods, including those without notices. Groups overlap, so coverage percentages are not additive. Missing neighborhoods are excluded; zero case denominators display `N/A`. The `-top` flag only limits the rankings in questions 1 and 5.
 
 ## Architecture, concurrency and memory
 

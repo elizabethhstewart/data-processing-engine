@@ -47,3 +47,31 @@ func TestRejectBadInputs(t *testing.T) {
 		t.Fatal("expected worker error")
 	}
 }
+
+func TestConcentration(t *testing.T) {
+	r := &Result{Neighborhoods: map[string]*Neighborhood{
+		"A": {Name: "A", Notices: 3, Cases: map[string]bool{"shared": true}},
+		"B": {Name: "B", Notices: 1, Cases: map[string]bool{"shared": true, "second": true}},
+		"C": {Name: "C", Cases: map[string]bool{"third": true}},
+	}}
+	var b bytes.Buffer
+	reportConcentration(&b, r)
+	for _, want := range []string{"Top  10% (  1 of   2)", "75.0%", "33.3%", "66.7%", "100.0%"} {
+		if !strings.Contains(b.String(), want) {
+			t.Fatalf("missing %q in %s", want, b.String())
+		}
+	}
+	r.Neighborhoods["A"].Cases = nil
+	r.Neighborhoods["B"].Cases = nil
+	r.Neighborhoods["C"].Cases = nil
+	b.Reset()
+	reportConcentration(&b, r)
+	if !strings.Contains(b.String(), "N/A") {
+		t.Fatal("zero denominator must be N/A")
+	}
+	b.Reset()
+	reportConcentration(&b, &Result{Neighborhoods: map[string]*Neighborhood{}})
+	if !strings.Contains(b.String(), "unavailable") {
+		t.Fatal("empty notices must be reported")
+	}
+}

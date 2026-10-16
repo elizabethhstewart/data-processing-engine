@@ -209,7 +209,7 @@ func Report(w io.Writer, r *Result, year, top int) {
 	printTop("1. Where are the most notices, and how many crime records occur there?", ranked(r, func(a, b *Neighborhood) bool { return a.Notices > b.Notices }), func(n *Neighborhood) string {
 		return fmt.Sprintf("%5d notices | %5d records | %5d cases", n.Notices, n.Records, len(n.Cases))
 	})
-	printTop("2. Which neighborhoods with notices have the most distinct crime cases?", ranked(r, func(a, b *Neighborhood) bool { return len(a.Cases) > len(b.Cases) }), func(n *Neighborhood) string { return fmt.Sprintf("%5d cases | %5d notices", len(n.Cases), n.Notices) })
+	reportConcentration(w, r)
 	fmt.Fprintln(w, "\n3. What crime types are reported in neighborhoods with versus without notices?\nTYPE                         WITH NOTICES   WITHOUT NOTICES")
 	yes, no := map[string]int{}, map[string]int{}
 	for _, n := range r.Neighborhoods {
@@ -270,4 +270,43 @@ func Report(w io.Writer, r *Result, year, top int) {
 		return fmt.Sprintf("%5.1f / 100 | %d notices | %d cases", score(n), n.Notices, len(n.Cases))
 	})
 	fmt.Fprintln(w, "Score: equal weights for notice count and case count, each divided by its citywide maximum.\nThis exploratory score is not a prediction or an allocation recommendation.")
+}
+
+// reportConcentration compares cumulative notice and distinct-case coverage.
+// Case IDs are unioned across neighborhoods to avoid double counting cases.
+func reportConcentration(w io.Writer, r *Result) {
+	fmt.Fprintln(w, "\n2. How concentrated are notices, and what share of crime cases occurs in those areas?")
+	ns := ranked(r, func(a, b *Neighborhood) bool { return a.Notices > b.Notices })
+	allCases := map[string]bool{}
+	totalNotices := 0
+	for _, n := range r.Neighborhoods {
+		totalNotices += n.Notices
+		for id := range n.Cases {
+			allCases[id] = true
+		}
+	}
+	if len(ns) == 0 {
+		fmt.Fprintln(w, "No neighborhoods with notices; concentration is unavailable.")
+		return
+	}
+	fmt.Fprintln(w, "TOP VACANCY NEIGHBORHOODS | NOTICE SHARE | DISTINCT CASE COVERAGE")
+	pct := func(n, d int) string {
+		if d == 0 {
+			return "N/A"
+		}
+		return fmt.Sprintf("%.1f%%", 100*float64(n)/float64(d))
+	}
+	for _, share := range []int{10, 25, 50, 100} {
+		count := (len(ns)*share + 99) / 100
+		notices := 0
+		cases := map[string]bool{}
+		for _, n := range ns[:count] {
+			notices += n.Notices
+			for id := range n.Cases {
+				cases[id] = true
+			}
+		}
+		fmt.Fprintf(w, "Top %3d%% (%3d of %3d)     %10s       %10s\n", share, count, len(ns), pct(notices, totalNotices), pct(len(cases), len(allCases)))
+	}
+	fmt.Fprintln(w, "Neighborhoods ranked by notice count; groups round up, with alphabetical tie breaks.\nNotice share uses all notices with known neighborhoods. Case coverage uses the union of\ndistinct case IDs with known neighborhoods, including areas without notices.\nA case spanning groups can appear in multiple groups; this is coverage, not an additive partition.")
 }
