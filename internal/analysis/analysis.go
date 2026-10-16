@@ -4,6 +4,7 @@ package analysis
 import (
 	"encoding/csv"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"sort"
@@ -40,8 +41,9 @@ func (r *Result) get(name string) *Neighborhood {
 	return n
 }
 
-// Load uses two readers and bounded worker pools. Only the collector owns maps,
-// avoiding locks and concurrent map writes. Raw rows are not retained.
+// Load pipelines concurrent parsing into hash-partitioned join/aggregation workers.
+// Each neighborhood belongs to exactly one worker, which exclusively owns its maps.
+// The final merge occurs after workers finish; raw rows are not retained.
 func Load(crime, vacant string, year, workers int) (*Result, error) {
 	if workers < 1 || workers > 64 {
 		return nil, fmt.Errorf("workers must be between 1 and 64")
@@ -60,8 +62,49 @@ func Load(crime, vacant string, year, workers int) (*Result, error) {
 		go func(path string, notice bool) { defer readers.Done(); errs <- read(path, notice, year, workers, out) }(spec.path, spec.notice)
 	}
 	go func() { readers.Wait(); close(out); close(errs) }()
-	r := &Result{Neighborhoods: map[string]*Neighborhood{}}
+
+	shards := make([]chan event, workers)
+	partials := make(chan *Result, workers)
+	for i := range shards {
+		shards[i] = make(chan event, 256)
+		go aggregate(shards[i], partials)
+	}
+	// Route both datasets by the same normalized key. This co-locates their
+	// records for parallel joins and preserves exact per-neighborhood case sets.
 	for e := range out {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(e.name))
+		shards[int(h.Sum32()%uint32(workers))] <- e
+	}
+	for _, shard := range shards {
+		close(shard)
+	}
+	r := &Result{Neighborhoods: map[string]*Neighborhood{}}
+	for i := 0; i < workers; i++ {
+		part := <-partials
+		r.ReadCrime += part.ReadCrime
+		r.IncludedCrime += part.IncludedCrime
+		r.MissingNeighborhood += part.MissingNeighborhood
+		r.Notices += part.Notices
+		r.LaterNotices += part.LaterNotices
+		for key, n := range part.Neighborhoods {
+			r.Neighborhoods[key] = n
+		}
+	}
+	for err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// aggregate joins notice and crime events on neighborhood and computes local
+// counts, distinct cases, crime-type totals and monthly totals concurrently
+// with the other partition workers. Ownership transfers on the result channel.
+func aggregate(input <-chan event, done chan<- *Result) {
+	r := &Result{Neighborhoods: map[string]*Neighborhood{}}
+	for e := range input {
 		if e.notice {
 			r.Notices++
 			if e.month == 1 {
@@ -87,12 +130,7 @@ func Load(crime, vacant string, year, workers int) (*Result, error) {
 		n.Types[e.kind]++
 		n.Months[e.month]++
 	}
-	for err := range errs {
-		if err != nil {
-			return nil, err
-		}
-	}
-	return r, nil
+	done <- r
 }
 func read(path string, notice bool, year, workers int, out chan<- event) error {
 	f, err := os.Open(path)

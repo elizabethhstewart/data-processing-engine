@@ -2,8 +2,10 @@ package analysis
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -73,5 +75,35 @@ func TestConcentration(t *testing.T) {
 	reportConcentration(&b, &Result{Neighborhoods: map[string]*Neighborhood{}})
 	if !strings.Contains(b.String(), "unavailable") {
 		t.Fatal("empty notices must be reported")
+	}
+}
+
+func TestPartitionedJoinMatchesSerial(t *testing.T) {
+	var crime, vacant strings.Builder
+	crime.WriteString("Neighborhood,CrimeDateTime,CCNumber,Description\n")
+	vacant.WriteString("Neighborhood,DateNotice,BLOCKLOT\n")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&crime, "Area %d,3/1/2025 1:00:00 PM,case%d,ROBBERY\n", i%31, i%100)
+		if i%2 == 0 {
+			fmt.Fprintf(&vacant, " area %d ,2024/01/01 00:00:00+00,parcel%d\n", i%31, i)
+		}
+	}
+	c := fixture(t, "crime.csv", crime.String())
+	v := fixture(t, "vacant.csv", vacant.String())
+	serial, err := Load(c, v, 2025, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, workers := range []int{2, 4, 8} {
+		parallel, err := Load(c, v, 2025, workers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(serial, parallel) {
+			t.Fatalf("results differ with %d workers", workers)
+		}
+	}
+	if len(serial.Neighborhoods) != 31 || serial.Notices != 500 || serial.IncludedCrime != 1000 {
+		t.Fatalf("unexpected totals: %+v", serial)
 	}
 }
